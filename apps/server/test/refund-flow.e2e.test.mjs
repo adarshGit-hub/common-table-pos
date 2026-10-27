@@ -46,7 +46,11 @@ test('edge order payment refund and shift reports stay idempotent and reconcile 
   const databasePath = join(directory, 'edge.sqlite');
   const port = await availablePort();
   const printedReceipts = [];
-  const printer = createServer(socket => socket.on('data', chunk => printedReceipts.push(chunk.toString('ascii'))));
+  const printer = createServer(socket => {
+    let received = '';
+    socket.on('data', chunk => { received += chunk.toString('ascii'); });
+    socket.on('close', () => printedReceipts.push(received));
+  });
   await new Promise((resolve, reject) => { printer.once('error', reject); printer.listen(0, '127.0.0.1', resolve); });
   const printerPort = printer.address().port;
   const baseUrl = `http://127.0.0.1:${port}`;
@@ -107,9 +111,12 @@ test('edge order payment refund and shift reports stay idempotent and reconcile 
   });
   assert.equal(reprint.response.status, 200);
   assert.equal(reprint.body.invoiceNumber, payment.body.invoiceNumber);
-  assert.equal(printedReceipts.filter(receipt => receipt.includes('INVOICE')).length, 2,
+  // The sale receipt prints in the background, so wait for both jobs instead of assuming arrival order.
+  const invoiceReceipts = () => printedReceipts.filter(receipt => receipt.includes('INVOICE'));
+  for (let attempt = 0; attempt < 40 && invoiceReceipts().length < 2; attempt += 1) await delay(50);
+  assert.equal(invoiceReceipts().length, 2,
     'initial receipt and reprint are both sent to the configured printer socket');
-  assert.ok(printedReceipts.at(-1).includes(payment.body.invoiceNumber));
+  assert.ok(invoiceReceipts().every(receipt => receipt.includes(payment.body.invoiceNumber)));
 
   await new Promise(resolve => printer.close(resolve));
   const failedReprint = await jsonRequest(baseUrl, `/api/orders/${order.id}/receipt/reprint`, {

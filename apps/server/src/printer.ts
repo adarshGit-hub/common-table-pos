@@ -40,36 +40,79 @@ function readableReceipt(raw:Buffer):string{
 
 export function formatKitchenTicket(order: KitchenOrder): Buffer {
   const parts:Buffer[]=[command(ESC,0x40),command(ESC,0x61,1),command(ESC,0x45,1),text(`${EDGE_CONFIG.tenantName}\n${EDGE_CONFIG.outletName}\n`),command(ESC,0x45,0),
-    text('KITCHEN ORDER\n'),command(ESC,0x61,0),text(line('=')+'\n'),text(columns('ORDER',order.orderNumber)+'\n'),
-    text(columns(order.orderType==='dine_in'?(order.tableLabel??'DINE IN'):'TAKEAWAY',new Date(order.createdAt).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}))+'\n'),text(line()+'\n')];
+    text('KITCHEN ORDER\n'),...(order.tokenNumber?[command(GS,0x21,0x11),text(`TOKEN ${order.tokenNumber}\n`),command(GS,0x21,0)]:[]),command(ESC,0x61,0),text(line('=')+'\n'),text(columns('ORDER',order.orderNumber)+'\n'),
+    text(columns(order.orderType==='dine_in'?(order.tableLabel??'DINE IN'):'TAKEAWAY',new Date(order.createdAt).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',timeZone:EDGE_CONFIG.timezone}))+'\n'),text(line()+'\n')];
   for(const item of order.lines){parts.push(command(ESC,0x45,1),text(`${item.voidedAt?'VOID ':''}${item.quantity} x ${item.name}\n`),command(ESC,0x45,0));if(item.voidReason)parts.push(text(`    REASON: ${item.voidReason}\n`));if(!item.voidedAt){for(const modifier of item.modifiers)parts.push(text(`    + ${modifier.name}${modifier.priceDeltaMinor?` (${money(modifier.priceDeltaMinor)})`:''}\n`));for(const row of wrap(item.note??''))if(row)parts.push(text(`    ${row}\n`));}}
   if(order.note)parts.push(text(line()+ '\n'),text('NOTE: '+wrap(order.note).join('\n')+'\n'));
   parts.push(text(line('=')+'\n\n'),command(GS,0x56,0x41,0x03));
   return Buffer.concat(parts);
 }
 
-export function formatReceipt(order: OrderRecord): Buffer {
+/** A pre-payment bill handed to a table; it carries no invoice number and no tenders. */
+export function formatBill(order: OrderRecord, defaultSac = ''): Buffer { return formatReceipt(order, [], 'bill', defaultSac); }
+
+export function formatReceipt(order: OrderRecord, tenders: Array<{ method: string; amountMinor: number }> = [], kind: 'receipt'|'bill' = 'receipt', defaultSac = ''): Buffer {
   const receiptName=EDGE_CONFIG.receiptName||EDGE_CONFIG.tenantName;
   const receiptAddress=EDGE_CONFIG.receiptAddress||EDGE_CONFIG.locationLabel;
   const parts:Buffer[]=[command(ESC,0x40),command(ESC,0x61,1),command(ESC,0x45,1),text(`${receiptName}\n${EDGE_CONFIG.outletName}\n`),command(ESC,0x45,0),
     text(`${wrap(receiptAddress).join('\n')}\n`),
     ...(EDGE_CONFIG.receiptPhone?[text(`Phone: ${EDGE_CONFIG.receiptPhone}\n`)]:[]),
     ...(EDGE_CONFIG.gstin?[text(`GSTIN: ${EDGE_CONFIG.gstin}\n`)]:[]),
-    text(line('=')+'\n'),text(`INVOICE  ${order.invoiceNumber??'PENDING'}\n`),
-    text(`ORDER    ${order.orderNumber}\n`),text(`${new Date(order.createdAt).toLocaleString('en-IN')}\n`),
-    text(`${order.orderType==='dine_in'?(order.tableLabel??'Dine in'):'Takeaway'} - ${order.guestCount} guest(s)\n`),text(line()+'\n')];
+    text(line('=')+'\n'),...(kind==='receipt'&&EDGE_CONFIG.gstin?[command(ESC,0x61,1),command(ESC,0x45,1),text('TAX INVOICE\n'),command(ESC,0x45,0),command(ESC,0x61,0)]:[]),
+    text(kind==='bill'?'BILL - NOT A TAX INVOICE\n':`INVOICE  ${order.invoiceNumber??'PENDING'}\n`),
+    text(`ORDER    ${order.orderNumber}\n`),text(`${new Date(order.createdAt).toLocaleString('en-IN',{timeZone:EDGE_CONFIG.timezone})}\n`),
+    text(`${order.orderType==='dine_in'?(order.tableLabel??'Dine in'):`Takeaway${order.tokenNumber?` - TOKEN ${order.tokenNumber}`:''}`} - ${order.guestCount} guest(s)\n`),
+    ...(order.customer?[text(`Customer: ${order.customer.name??''} ${order.customer.phone.replace(/^(\d+)(\d{4})$/,(_match,head:string,tail:string)=>'x'.repeat(head.length)+tail)}`.replace(/\s+/g,' ').trim()+'\n')]:[]),
+    text(line()+'\n')];
   for(const item of order.lines.filter(line=>!line.voidedAt)){parts.push(text(columns(`${item.quantity} x ${item.name}`,money(item.lineTotalMinor,order.currency))+'\n'));for(const modifier of item.modifiers)parts.push(text(`  + ${modifier.name}${modifier.priceDeltaMinor?` (${money(modifier.priceDeltaMinor,order.currency)})`:''}\n`));}
+  parts.push(text(line()+'\n'),...((order.pricingVersion??1)>=2?gstTotals(order,defaultSac):legacyTotals(order)),
+    command(ESC,0x45,1),text(columns('TOTAL',money(order.totalMinor,order.currency))+'\n'),command(ESC,0x45,0),
+    ...(kind==='bill'?[text('Please pay at the counter.\n')]:(tenders.length?tenders:[{method:order.paymentMethod??'cash',amountMinor:order.totalMinor}])
+      .map(tender=>text(columns(`Paid - ${tender.method.toUpperCase()}`,money(tender.amountMinor,order.currency))+'\n'))),text(line('=')+'\n'),
+    command(ESC,0x61,1),text(`${wrap(EDGE_CONFIG.receiptFooter||'Thank you. See you again!').join('\n')}\n\n`),command(GS,0x56,0x41,0x03));
+  return Buffer.concat(parts);
+}
+
+/** Totals block for orders priced before the GST bill engine: one tax row per rate. */
+function legacyTotals(order: OrderRecord): Buffer[] {
   const taxes=new Map<string,{code:string|null;rate:number;amount:number}>();
   for(const item of order.lines.filter(line=>!line.voidedAt)){
     const rate=item.taxRateBps??order.taxRateBps;const code=item.taxCode??null;const key=`${rate}:${code??''}`;
     const bucket=taxes.get(key)??{code,rate,amount:0};bucket.amount+=Math.round(item.lineTotalMinor*rate/10000);taxes.set(key,bucket);
   }
   const taxRows=[...taxes.values()].sort((a,b)=>a.rate-b.rate||(a.code??'').localeCompare(b.code??''));
-  parts.push(text(line()+'\n'),text(columns('Subtotal',money(order.subtotalMinor,order.currency))+'\n'),
-    ...taxRows.map(bucket=>text(columns(`Tax ${bucket.rate/100}%${bucket.code?` HSN/SAC ${bucket.code}`:''}`,money(bucket.amount,order.currency))+'\n')),
-    command(ESC,0x45,1),text(columns('TOTAL',money(order.totalMinor,order.currency))+'\n'),command(ESC,0x45,0),
-    text(columns(`Paid - ${(order.paymentMethod??'cash').toUpperCase()}`,money(order.totalMinor,order.currency))+'\n'),text(line('=')+'\n'),
-    command(ESC,0x61,1),text(`${wrap(EDGE_CONFIG.receiptFooter||'Thank you. See you again!').join('\n')}\n\n`),command(GS,0x56,0x41,0x03));
+  return [text(columns('Subtotal',money(order.subtotalMinor,order.currency))+'\n'),
+    ...taxRows.map(bucket=>text(columns(`Tax ${bucket.rate/100}%${bucket.code?` HSN/SAC ${bucket.code}`:''}`,money(bucket.amount,order.currency))+'\n'))];
+}
+
+/** GST totals block: discount, service charge, taxable value, CGST/SGST per rate and round-off. */
+function gstTotals(order: OrderRecord, defaultSac: string): Buffer[] {
+  const amount=(label:string,minor:number)=>text(columns(label,money(minor,order.currency))+'\n');
+  const rows:Buffer[]=[amount('Item total',order.subtotalMinor)];
+  for(const discount of order.discounts??[])if(discount.appliedMinor){
+    const item=discount.lineId?order.lines.find(line=>line.id===discount.lineId)?.name:undefined;
+    rows.push(amount(`Discount${discount.kind==='percent'?` ${discount.value/100}%`:''}${item?` (${item})`:''}`,-discount.appliedMinor));
+  }
+  if(order.serviceChargeMinor)rows.push(amount(`Service charge ${(order.serviceChargeBps??0)/100}%`,order.serviceChargeMinor));
+  rows.push(amount('Taxable value',order.subtotalMinor-(order.discountMinor??0)+(order.serviceChargeMinor??0)));
+  for(const tax of order.taxLines??[]){
+    const code=tax.taxCode??defaultSac;const half=`${tax.taxRateBps/200}%`;
+    rows.push(text(`  ${code?`HSN/SAC ${code} - `:''}${tax.taxRateBps/100}% on ${money(tax.taxableMinor,order.currency)}\n`),
+      amount(`  CGST ${half}`,tax.cgstMinor),amount(`  SGST ${half}`,tax.sgstMinor));
+  }
+  if(order.roundOffMinor)rows.push(amount('Round off',order.roundOffMinor));
+  return rows;
+}
+
+/** One guest's share of a split bill, printed after the single invoice is paid. */
+export function formatShareSlip(order: OrderRecord, share: { label: string; method: string; amountMinor: number; lineIds?: string[] }): Buffer {
+  const lines=share.lineIds?.length?order.lines.filter(item=>share.lineIds!.includes(item.id)&&!item.voidedAt):[];
+  const parts:Buffer[]=[command(ESC,0x40),command(ESC,0x61,1),command(ESC,0x45,1),text('SPLIT BILL SHARE\n'),command(ESC,0x45,0),command(ESC,0x61,0),
+    text(line('=')+'\n'),text(columns('INVOICE',order.invoiceNumber??'PENDING')+'\n'),text(columns(share.label,order.tableLabel??'Takeaway')+'\n'),text(line()+'\n')];
+  for(const item of lines)parts.push(text(columns(`${item.quantity} x ${item.name}`,money(item.lineTotalMinor,order.currency))+'\n'));
+  if(lines.length)parts.push(text('Item prices exclude tax and charges.\n'),text(line()+'\n'));
+  parts.push(command(ESC,0x45,1),text(columns(`Paid - ${share.method.toUpperCase()}`,money(share.amountMinor,order.currency))+'\n'),command(ESC,0x45,0),
+    text(line('=')+'\n\n'),command(GS,0x56,0x41,0x03));
   return Buffer.concat(parts);
 }
 

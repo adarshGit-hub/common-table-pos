@@ -1,3 +1,5 @@
+import type { DiscountKind, TaxLine } from './pricing.js';
+export * from './pricing.js';
 export type OrderType = 'dine_in' | 'takeaway';
 export type OrderStatus = 'sent' | 'preparing' | 'ready' | 'paid' | 'cancelled';
 export type PaymentMethod = 'cash' | 'upi' | 'card';
@@ -65,10 +67,31 @@ export interface CreateOrderCommand {
   outletId: string;
   terminalId: string;
   orderType: OrderType;
+  /** Preferred for dine-in. A legacy client may send only tableLabel. */
+  tableId?: string;
   tableLabel?: string;
   guestCount?: number;
   note?: string;
+  /** Optional guest details; a known phone number links the order to that customer. */
+  customer?: CustomerInput;
   lines: OrderLineDraft[];
+}
+
+export interface CustomerInput {
+  phone: string;
+  name?: string;
+}
+
+export interface CustomerRecord {
+  id: string;
+  phone: string;
+  name: string | null;
+}
+
+export interface CustomerSummary extends CustomerRecord {
+  visitCount: number;
+  lastVisitAt: string | null;
+  totalSpendMinor: number;
 }
 
 export interface OrderLine {
@@ -110,6 +133,7 @@ export interface KitchenOrder {
   note: string | null;
   createdAt: string;
   lines: OrderLine[];
+  tokenNumber?: number | null;
 }
 
 export interface OrderRecord extends KitchenOrder {
@@ -125,6 +149,27 @@ export interface OrderRecord extends KitchenOrder {
   taxTotalMinor: number;
   totalMinor: number;
   paymentMethod?: PaymentMethod;
+  tableId?: string | null;
+  billPrintedAt?: string | null;
+  /** 1: original per-line tax; 2: discounts, service charge, CGST/SGST and round-off. */
+  pricingVersion?: number;
+  discountMinor?: number;
+  serviceChargeBps?: number;
+  serviceChargeMinor?: number;
+  roundOffMinor?: number;
+  discounts?: OrderDiscount[];
+  taxLines?: TaxLine[];
+  customer?: CustomerRecord | null;
+}
+
+export interface OrderDiscount {
+  id: string;
+  lineId: string | null;
+  kind: DiscountKind;
+  value: number;
+  appliedMinor: number;
+  reason: string;
+  createdAt: string;
 }
 
 export interface PaymentCommand {
@@ -133,7 +178,15 @@ export interface PaymentCommand {
   shiftId: string;
   method?: PaymentMethod;
   amountMinor?: number;
-  tenders?: Array<{ method: PaymentMethod; amountMinor: number }>;
+  tenders?: PaymentTender[];
+}
+
+/** One tender of a payment. A label (e.g. "Guest 2") prints a share slip; lineIds narrow it to those items. */
+export interface PaymentTender {
+  method: PaymentMethod;
+  amountMinor: number;
+  label?: string;
+  lineIds?: string[];
 }
 
 export interface ShiftRecord {
@@ -164,8 +217,10 @@ export interface DailySalesReport {
   startAt: string;
   endAt: string;
   generatedAt: string;
-  totals: { paidOrderCount: number; subtotalMinor: number; taxTotalMinor: number; salesMinor: number };
-  taxBreakdown: Array<{ taxCode: string | null; taxRateBps: number; taxMinor: number }>;
+  /** subtotalMinor is the taxable value (after discounts, including service charge), net of refunds. */
+  totals: { paidOrderCount: number; subtotalMinor: number; taxTotalMinor: number; salesMinor: number;
+    discountMinor: number; serviceChargeMinor: number; roundOffMinor: number };
+  taxBreakdown: Array<{ taxCode: string | null; taxRateBps: number; taxMinor: number; cgstMinor: number; sgstMinor: number }>;
   refunds: { count: number; amountMinor: number };
   tenders: Array<{ method: PaymentMethod; amountMinor: number; paymentCount: number }>;
   items: Array<{ menuItemId: string; name: string; quantity: number; salesMinor: number }>;
@@ -181,7 +236,7 @@ export interface CashMovementCommand {
 }
 
 export interface ServerMessage {
-  type: 'kitchen.snapshot' | 'order.created' | 'order.updated' | 'server.ready';
+  type: 'kitchen.snapshot' | 'order.created' | 'order.updated' | 'floor.updated' | 'server.ready';
   payload: KitchenOrder[] | KitchenOrder | { outletId: string };
 }
 
@@ -246,3 +301,55 @@ export const DEMO_MENU: MenuItem[] = [
   demoItem('masala-chaas','Masala Chaas','Beverages',55,'🥛','#e9e8d9','Beverages'),
   demoItem('mango-shake','Mango Shake','Beverages',110,'🥭','#f2e6ce','Beverages'),
 ];
+
+/** Who owns outlet setup: this laptop while unpaired, the cloud portal once paired. */
+export type SetupMode = 'standalone' | 'cloud';
+
+export type FloorTableStatus = 'free' | 'occupied' | 'bill_printed' | 'ready';
+
+export interface FloorTableView {
+  id: string;
+  name: string;
+  capacity: number;
+  sortOrder: number;
+  status: FloorTableStatus;
+  order: null | {
+    id: string;
+    orderNumber: string;
+    guestCount: number;
+    totalMinor: number;
+    createdAt: string;
+    billPrintedAt: string | null;
+  };
+}
+
+export interface FloorAreaView {
+  id: string;
+  name: string;
+  sortOrder: number;
+  tables: FloorTableView[];
+}
+
+export interface FloorView {
+  setupMode: SetupMode;
+  currency: string;
+  areas: FloorAreaView[];
+}
+
+export interface TableReportRow {
+  tableId: string | null;
+  tableName: string;
+  areaName: string;
+  orderCount: number;
+  guestCount: number;
+  salesMinor: number;
+  averageBillMinor: number;
+  averageSeatedMinutes: number;
+}
+
+export interface TableReport {
+  date: string;
+  currency: string;
+  tables: TableReportRow[];
+  areas: Array<Omit<TableReportRow, 'tableId' | 'tableName'>>;
+}

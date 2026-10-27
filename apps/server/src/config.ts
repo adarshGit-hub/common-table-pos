@@ -113,3 +113,8 @@ export function checkEdgeConfiguration(): void {
   if (process.env.NODE_ENV==='production'&&(!hasSupabaseUrl||!hasSupabaseKey))
     throw new Error('Supabase Auth URL and publishable key are required in production.');
 }
+
+/** Paired terminals take outlet setup from the cloud; unpaired ones own it locally. */
+export function setupMode(): 'standalone' | 'cloud' {
+  return SYNC_CONFIG.url && SYNC_CONFIG.terminalKey ? 'cloud' : 'standalone';
+}

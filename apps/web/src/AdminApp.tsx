@@ -136,17 +136,6 @@ export default function AdminApp() {
     return () => listener.subscription.unsubscribe();
   }, [loadWorkspace]);
 
-  useEffect(() => {
-    if (!user || !tenantId || !outletId) return;
-    const outlet = outlets.find(row => row.outlet_id === outletId);
-    if (!outlet) return;
-    try {
-      localStorage.setItem('common-table.menu-context.v1', JSON.stringify({
-        tenantId, outletId, outletName: outlet.name, currency: outlet.currency,
-      }));
-    } catch { /* Cashier can still load the menu during this session. */ }
-  }, [user, tenantId, outletId, outlets]);
-
   const refreshTerminals = useCallback(async () => {
     if (!supabase || !user || !tenantId || !outletId) { setTerminals([]); return; }
     const { data, error: queryError } = await supabase.from('terminals')

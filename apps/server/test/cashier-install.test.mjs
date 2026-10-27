@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
-const repositoryRoot = resolve(new URL('../../../', import.meta.url).pathname);
+const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const installerPath = join(repositoryRoot, 'scripts/install-cashier-service.sh');
 
 test('Linux cashier installer creates a persistent, restricted user service', { skip: process.platform !== 'linux' }, () => {

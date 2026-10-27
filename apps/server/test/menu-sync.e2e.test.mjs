@@ -242,7 +242,7 @@ test('managed menu sync is local-first across WAN loss and an edge restart', { t
   assert.deepEqual((await jsonRequest(baseUrl, '/api/context')).body, {
     tenantId, tenantName: 'Test Cafe', outletId, outletName: outletConfig.name,
     terminalId, terminalName: 'Counter 1', locationLabel: 'Test Location',
-    currency: 'USD', timeZone: 'UTC', taxRateBps: 1000,
+    currency: 'USD', timeZone: 'UTC', taxRateBps: 1000, setupMode: 'cloud',
     receipt: { name: outletConfig.receiptName, address: outletConfig.receiptAddress, phone: outletConfig.receiptPhone,
       gstin: outletConfig.gstin, footer: outletConfig.receiptFooter },
   }, 'the paired edge applies cloud outlet settings');
@@ -469,7 +469,7 @@ test('managed menu sync is local-first across WAN loss and an edge restart', { t
   assert.equal(report.body.totals.subtotalMinor, 455);
   assert.equal(report.body.totals.salesMinor, 478);
   assert.equal(report.body.totals.taxTotalMinor, 23, 'tax refunds are allocated proportionally to the original order tax');
-  assert.deepEqual(report.body.taxBreakdown, [{ taxCode: '1101', taxRateBps: 500, taxMinor: 23 }]);
+  assert.deepEqual(report.body.taxBreakdown, [{ taxCode: '1101', taxRateBps: 500, taxMinor: 23, cgstMinor: 12, sgstMinor: 11 }]);
   assert.deepEqual(report.body.refunds, { count: 1, amountMinor: 100 });
   assert.deepEqual(report.body.tenders, [
     { method: 'cash', amountMinor: 300, paymentCount: 1 },
@@ -528,7 +528,9 @@ test('managed menu sync is local-first across WAN loss and an edge restart', { t
   assert.equal(updatedOrder.response.status, 201);
   assert.equal(updatedOrder.body.currency, 'INR');
   assert.equal(updatedOrder.body.taxRateBps, 500);
-  assert.equal(updatedOrder.body.totalMinor, 525);
+  assert.equal(updatedOrder.body.taxTotalMinor, 26, 'CGST and SGST of 2.5% each on Rs 5.00');
+  assert.equal(updatedOrder.body.totalMinor, 500, 'INR bills round to the nearest rupee');
+  assert.equal(updatedOrder.body.roundOffMinor, -26);
   const originalOrderAfterConfigChange = (await jsonRequest(baseUrl, '/api/orders')).body.find((order) => order.commandId === commandId);
   assert.equal(originalOrderAfterConfigChange.currency, 'USD', 'configuration updates do not rewrite historical order currency');
   assert.equal(originalOrderAfterConfigChange.taxRateBps, 1000, 'configuration updates do not rewrite historical order tax');

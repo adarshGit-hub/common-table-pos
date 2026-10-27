@@ -24,6 +24,19 @@ npm run dev
 
 Vite serves the web client on port 5173 and proxies API/WebSocket traffic to the edge server's `PORT` (3001 by default). Set `POS_API_PROXY` when the edge runs at a different address. From the server workspace, the edge server creates `apps/server/.data/common-table.db` in SQLite WAL mode and starts its mock ESC/POS TCP listener on `127.0.0.1:9100`.
 
+## Restaurant features on the cashier laptop
+
+A terminal without a `POS_TERMINAL_KEY` runs in **standalone mode**: managers set up tables, menu and outlet details on the laptop itself. Once paired with the cloud, those setup screens become read-only and the cloud portal owns them; orders, payments and reports work the same either way. `GET /api/context` reports the current `setupMode`.
+
+- **Floor and tables.** The Floor page shows every table as free, occupied, ready to serve or bill printed, with guests, running total and time seated. Tap a table to start or open its order, print a pre-payment bill, move the order to a free table, or merge two tables (merge is standalone-only). Managers add areas and numbered tables on the Tables page; removed tables with history are retired, not deleted.
+- **Billing.** Bills are priced by one shared engine (`packages/contracts/src/pricing.ts`) on both the till and the server: items, item and whole-bill discounts (with a reason; cashiers are capped at a configurable share, default 10%), an optional dine-in service charge the guest can decline, GST split into CGST and SGST per rate, and rounding to the nearest rupee. Receipts print `TAX INVOICE` with GSTIN, taxable value, CGST/SGST per rate with HSN/SAC (default `996331`) and round-off. Orders opened before this engine keep their original totals (`pricing_version` 1). Check GST rates and invoice wording with your accountant; e-invoicing is not implemented.
+- **Split bills.** A saved order can be split equally or by item between up to 10 guests; it stays one invoice with one tender per guest and a printed share slip each.
+- **Customers and tokens.** An optional phone and name link an order to a returning customer (visits, last visit, total spend). Takeaway orders get a token number that restarts each business day, printed large on the kitchen ticket and receipt. Receipts mask all but the last four phone digits.
+- **Menu and settings.** Managers edit items, prices, GST rate, HSN/SAC, kitchen station and options on the Menu page; cashiers can mark items sold out from the till. The Settings page holds the discount limit, service charge, quick kitchen notes and receipt details.
+- **Reports.** Daily reports add discounts, service charge, round-off, CGST/SGST and a per-table and per-area section, each with CSV export.
+
+Tests run on Node 22 (`npm test`); Node 26 has crashed natively in this suite.
+
 ## Supabase schema and local Auth
 
 The tracked `supabase/migrations` directory includes the migrations already applied to the dedicated `common-table-pos` project, followed by the cloud order, payment, shift, cash movement, and audit projections. The local Supabase Auth Site URL is `http://localhost:5173`, matching Vite; it is separate from the hosted project's Auth settings. For a local Supabase stack, install Docker and run `npx supabase start` followed by `npx supabase db reset`. The local stack is configured not to load sample business records by default.

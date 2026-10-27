@@ -3,6 +3,14 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import './style.css';
 
+// Earlier versions kept copies of outlet setup, menu and floor plan in the
+// browser. The local cashier service is now the only source, so drop them.
+try {
+  for (const key of Object.keys(localStorage)) {
+    if (/^common-table\.(edge-context|menu-context|menu-cache|floor-plan)\.v1/.test(key)) localStorage.removeItem(key);
+  }
+} catch { /* Storage may be unavailable in private browsing. */ }
+
 const AdminApp = lazy(() => import('./AdminApp'));
 const Page = window.location.pathname.startsWith('/admin') ? AdminApp : App;
 ReactDOM.createRoot(document.getElementById('root')!).render(

@@ -198,3 +198,29 @@ CREATE TABLE IF NOT EXISTS sync_outbox (
 );
 CREATE INDEX IF NOT EXISTS sync_outbox_pending
   ON sync_outbox(next_attempt_at,outbox_id) WHERE synced_at IS NULL;
+CREATE TABLE IF NOT EXISTS edge_settings (
+  key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS local_commands (
+  command_id TEXT PRIMARY KEY, action TEXT NOT NULL, request_json TEXT NOT NULL,
+  result_json TEXT NOT NULL, occurred_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS order_discounts (
+  id TEXT PRIMARY KEY, command_id TEXT NOT NULL UNIQUE, tenant_id TEXT NOT NULL, outlet_id TEXT NOT NULL,
+  order_id TEXT NOT NULL, order_line_id TEXT, kind TEXT NOT NULL CHECK(kind IN ('percent','amount')),
+  value INTEGER NOT NULL CHECK(value > 0), applied_minor INTEGER NOT NULL DEFAULT 0,
+  reason TEXT NOT NULL CHECK(length(trim(reason)) BETWEEN 3 AND 120), actor_id TEXT NOT NULL, created_at TEXT NOT NULL,
+  voided_at TEXT, void_reason TEXT, voided_by TEXT,
+  FOREIGN KEY(tenant_id,outlet_id,order_id) REFERENCES orders(tenant_id,outlet_id,id)
+);
+CREATE INDEX IF NOT EXISTS order_discounts_by_order ON order_discounts(tenant_id,outlet_id,order_id);
+CREATE TABLE IF NOT EXISTS order_tax_lines (
+  order_id TEXT NOT NULL, tax_rate_bps INTEGER NOT NULL, tax_code TEXT NOT NULL DEFAULT '',
+  taxable_minor INTEGER NOT NULL, cgst_minor INTEGER NOT NULL, sgst_minor INTEGER NOT NULL,
+  PRIMARY KEY(order_id,tax_rate_bps,tax_code)
+);
+CREATE TABLE IF NOT EXISTS customers (
+  id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, outlet_id TEXT NOT NULL, phone TEXT NOT NULL, name TEXT,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  FOREIGN KEY(tenant_id,outlet_id) REFERENCES outlets(tenant_id,id), UNIQUE(tenant_id,outlet_id,phone)
+);

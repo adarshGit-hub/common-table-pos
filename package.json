@@ -10,7 +10,7 @@
     "dev:web": "npm --workspace @common-table/web run dev",
     "predev": "npm --workspace @common-table/contracts run build && npm --workspace @common-table/server run build",
     "build": "npm --workspace @common-table/contracts run build && npm --workspace @common-table/server run build && npm --workspace @common-table/web run build",
-    "test": "npm run build && node --test apps/server/test/*.test.mjs apps/web/test/*.test.mjs",
+    "test": "npm run build && node --test packages/contracts/test/*.test.mjs apps/server/test/*.test.mjs apps/web/test/*.test.mjs",
     "start": "npm --workspace @common-table/server run start"
   },
   "devDependencies": {

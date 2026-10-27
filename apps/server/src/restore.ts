@@ -38,7 +38,14 @@ try {
 
   if (existsSync(destination)) {
     safetyBackup = `${destination}.pre-restore-${new Date().toISOString().replaceAll(':', '-')}.db`;
-    const activeDb = new Database(destination, { readonly: true, fileMustExist: true });
+    // Fold any write-ahead log left by a crash into the main file. Otherwise SQLite
+    // would replay that stale log over the restored file after the rename.
+    const activeDb = new Database(destination, { fileMustExist: true });
+    const [checkpoint] = activeDb.pragma('wal_checkpoint(TRUNCATE)') as Array<{ busy: number }>;
+    if (checkpoint?.busy) {
+      activeDb.close();
+      throw new Error('The database is in use. Stop the edge service before restoring.');
+    }
     await activeDb.backup(safetyBackup);
     activeDb.close();
     const verifiedSafetyCopy = new Database(safetyBackup, { readonly: true, fileMustExist: true });
@@ -46,6 +53,7 @@ try {
     verifiedSafetyCopy.close();
   }
 
+  for (const suffix of ['-wal', '-shm']) rmSync(`${destination}${suffix}`, { force: true });
   renameSync(temporary, destination);
   const restoredDb = new Database(destination, { readonly: true, fileMustExist: true });
   verifyOutlet(restoredDb, 'Restored database');

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { BarChart3, Download, LoaderCircle, RefreshCw, RotateCcw } from 'lucide-react';
+import TableReportPanel from './TableReportPanel';
 import type { DailySalesReport, OrderRecord, PaymentMethod, ShiftSummary } from '@common-table/contracts';
 
 function businessDate(timeZone?: string): string {
@@ -127,6 +128,7 @@ export default function ReportsView({ timeZone, currency='INR', canManage=false 
           ['Refunds', money(report.refunds.amountMinor), `${report.refunds.count} refund${report.refunds.count===1?'':'s'} recorded`],
           ['Cash variance', money(report.shifts.varianceMinor), `${report.shifts.closedCount} shifts closed`],
           ['Voids', money(report.voids.amountMinor), `${report.voids.lineCount} lines · ${report.voids.quantity} units`],
+          ['Discounts', money(report.totals.discountMinor), `Service charge ${money(report.totals.serviceChargeMinor)} · round-off ${money(report.totals.roundOffMinor)}`],
         ].map(([label,value,caption])=><article key={label} className={card}><p className="text-[9px] font-semibold text-[#87948d]">{label}</p><strong className="mt-2 block text-[22px] tracking-[-.6px] text-[#293c31]">{value}</strong><small className="mt-1 block text-[9px] text-[#98a29d]">{caption}</small></article>)}
       </div>
       <div className="mt-4 grid gap-4 xl:grid-cols-2">
@@ -134,6 +136,7 @@ export default function ReportsView({ timeZone, currency='INR', canManage=false 
         <section className={card}><h2 className="mb-3 text-[12px] font-bold">Tax by configured rate</h2>{report.taxBreakdown.length?<ul className="divide-y divide-[#edf0ed]">{report.taxBreakdown.map(row=><li key={`${row.taxRateBps}:${row.taxCode??''}`} className="flex justify-between py-2.5 text-[10px]"><span className="text-[#607168]">{(row.taxRateBps/100).toFixed(2)}% · {row.taxCode?`HSN/SAC ${row.taxCode}`:'Unclassified'}</span><strong>{money(row.taxMinor)}</strong></li>)}</ul>:<p className="text-[10px] text-[#98a29d]">No paid item tax for this business date.</p>}</section>
         <section className={card}><h2 className="mb-1 text-[12px] font-bold">Item sales</h2><p className="mb-3 text-[9px] text-[#98a29d]">Gross item sales before order-level refunds.</p>{report.items.length?<div className="overflow-x-auto"><table className="w-full text-left text-[10px]"><thead className="text-[8px] uppercase tracking-wide text-[#98a29d]"><tr><th className="pb-2">Item</th><th className="pb-2 text-right">Qty</th><th className="pb-2 text-right">Sales</th></tr></thead><tbody className="divide-y divide-[#edf0ed]">{report.items.map(row=><tr key={`${row.menuItemId}:${row.name}`}><td className="py-2 text-[#526259]">{row.name}</td><td className="py-2 text-right">{row.quantity}</td><td className="py-2 text-right font-semibold">{money(row.salesMinor)}</td></tr>)}</tbody></table></div>:<p className="text-[10px] text-[#98a29d]">No paid item sales for this business date.</p>}</section>
       </div>
+      <TableReportPanel date={date} refresh={refreshSequence} card={card}/>
       <p className="mt-4 rounded-xl border border-[#efe5ce] bg-[#fffaf0] p-3 text-[9px] leading-5 text-[#8a7857]">This report reads the outlet edge’s local SQLite data. Net sales and tenders subtract recorded refunds; item sales remain gross because refunds are currently recorded against the order, not individual items. Online cloud reports and provider settlements are not connected.</p>
       {canManage&&<RefundsPanel currency={report?.currency??currency} onRefundComplete={()=>setRefreshSequence(value=>value+1)}/>}
     </>:<div className="grid min-h-60 place-items-center rounded-2xl border border-dashed border-[#dfe8e1] bg-white text-[10px] text-[#98a29d]">{error?'Report unavailable':'Loading report…'}</div>}

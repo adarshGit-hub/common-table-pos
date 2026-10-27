@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 
-const root = resolve(new URL('../../../', import.meta.url).pathname);
+const root = fileURLToPath(new URL('../../../', import.meta.url));
 
 async function availablePort() {
   const server = createServer();

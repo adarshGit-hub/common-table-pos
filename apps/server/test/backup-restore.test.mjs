@@ -72,3 +72,36 @@ test('SQLite backup restores verified outlet data and keeps a pre-restore safety
   assert.equal(safetyCopy.pragma('quick_check')[0].quick_check, 'ok');
   safetyCopy.close();
 });
+
+test('restore replaces a crashed database whose write-ahead log was never checkpointed', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'common-table-restore-wal-'));
+  const backupPath = join(directory, 'verified-backup.sqlite');
+  const destinationPath = join(directory, 'edge.sqlite');
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  seedDatabase(backupPath, 'backup-value');
+  seedDatabase(destinationPath, 'before-crash');
+  // Simulate a crashed edge: a WAL write that is never checkpointed or closed.
+  const crash = spawnSync(process.execPath, ['-e', `
+    const Database = require(${JSON.stringify(join(root, 'node_modules/better-sqlite3'))});
+    const database = new Database(${JSON.stringify(destinationPath)});
+    database.pragma('journal_mode = WAL');
+    database.pragma('wal_autocheckpoint = 0');
+    database.prepare('UPDATE restore_test_marker SET value=?').run('live-wal-value');
+    process.kill(process.pid, 'SIGKILL');
+  `], { cwd: root, encoding: 'utf8' });
+  assert.equal(crash.signal, 'SIGKILL', crash.stderr);
+
+  const restored = runCli('apps/server/dist/restore.js', {
+    POS_DATABASE_PATH: destinationPath, POS_RESTORE_PATH: destinationPath, POS_RESTORE_SOURCE: backupPath,
+  }).at(-1);
+  assert.equal(restored.event, 'database.restore.completed');
+
+  const database = new Database(destinationPath, { readonly: true });
+  assert.equal(database.prepare('SELECT value FROM restore_test_marker').get().value, 'backup-value');
+  database.close();
+  const safetyCopy = new Database(restored.safetyBackup, { readonly: true });
+  assert.equal(safetyCopy.prepare('SELECT value FROM restore_test_marker').get().value, 'live-wal-value',
+    'the safety copy keeps the crashed database including its un-checkpointed writes');
+  safetyCopy.close();
+});
